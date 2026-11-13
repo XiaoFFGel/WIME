@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<!-- 手机端控制页面: 触屏区控制鼠标, 下方按钮发送按键和文字 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>手机遥控鼠标键盘</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1e1e28; color: #eee;
+               font-family: sans-serif; user-select: none; -webkit-user-select: none; }
+  body { display: flex; flex-direction: column; }
+  /* 触屏板: 单指拖动=移动鼠标, 单指点按=左键, 双指点按=右键, 双指拖动=滚轮 */
+  #pad { flex: 1; background: #2a2a38; border-radius: 12px; margin: 10px;
+         touch-action: none; display: flex; align-items: center; justify-content: center;
+         color: #666; font-size: 14px; text-align: center; }
+  #bar { padding: 0 10px 10px; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  button { flex: 1; padding: 14px 0; border: none; border-radius: 8px;
+           background: #3a3a4c; color: #eee; font-size: 16px; }
+  button:active { background: #5a5a7c; }
+  #input { flex: 4; padding: 12px; border: none; border-radius: 8px;
+           background: #33333f; color: #eee; font-size: 16px; }
+</style>
+</head>
+<body>
+  <div id="pad">单指拖动:移动 | 单指点击:左键<br>双指点击:右键 | 双指拖动:滚轮</div>
+  <div id="bar">
+    <div class="row">
+      <input id="input" placeholder="输入文字后点发送(支持中文)">
+      <button onclick="sendText()">发送</button>
+    </div>
+    <div class="row">
+      <button onclick="sendKey('esc')">Esc</button>
+      <button onclick="sendKey('tab')">Tab</button>
+      <button onclick="sendKey('backspace')">退格</button>
+      <button onclick="sendKey('enter')">回车</button>
+      <button onclick="sendKey('delete')">Del</button>
+    </div>
+    <div class="row">
+      <button onclick="sendKey('left')">←</button>
+      <button onclick="sendKey('up')">↑</button>
+      <button onclick="sendKey('down')">↓</button>
+      <button onclick="sendKey('right')">→</button>
+    </div>
+  </div>
+<script>
+  const pad = document.getElementById('pad');
+  const input = document.getElementById('input');
+
+  // 发送指令到服务端
+  function send(data) {
+    fetch('/api', { method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data) });
+  }
+  const sendKey = k => send({ type: 'key', key: k });
+  function sendText() {
+    if (input.value) { send({ type: 'text', text: input.value }); input.value = ''; }
+    input.blur();  // 收起手机键盘
+  }
+
+  // ===== 触屏板逻辑 =====
+  const pts = new Map();            // 当前按下的手指 {id: {x, y}}
+  let gesture = { max: 0, t0: 0, dist: 0 };  // 本次手势: 最多几指/开始时间/移动距离
+  let lastMid = null;               // 双指中点, 用于计算滚动量
+  let moveX = 0, moveY = 0;         // 待发送的鼠标位移
+  let scrollY = 0;                  // 待发送的滚动量
+
+  // 双指中点坐标
+  function mid() {
+    const [a, b] = [...pts.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  // 每 30ms 批量发送一次位移/滚动, 避免请求过多
+  setInterval(() => {
+    if (moveX || moveY) {
+      send({ type: 'move', dx: Math.round(moveX), dy: Math.round(moveY) });
+      moveX = moveY = 0;
+    }
+    if (Math.abs(scrollY) >= 5) {          // 累积够一点再发, 20px 约等于一格滚轮
+      send({ type: 'scroll', dy: Math.round(scrollY / 20) });
+      scrollY = 0;
+    }
+  }, 30);
+
+  pad.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) gesture = { max: 1, t0: Date.now(), dist: 0 };
+    if (pts.size === 2) { gesture.max = 2; lastMid = mid(); }
+    pad.setPointerCapture(e.pointerId);
+  });
+
+  pad.addEventListener('pointermove', e => {
+    const p = pts.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    if (pts.size === 1) {                  // 单指: 累积鼠标位移
+      moveX += dx; moveY += dy;
+      gesture.dist += Math.abs(dx) + Math.abs(dy);
+    } else if (pts.size === 2) {           // 双指: 累积滚动量
+      const m = mid();
+      scrollY += m.y - lastMid.y;
+      lastMid = m;
+    }
+  });
+
+  function lift(e) {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pts.size === 0) {                  // 全部手指抬起, 判断是否为点击
+      const dt = Date.now() - gesture.t0;
+      if (gesture.max === 1 && dt < 250 && gesture.dist < 8) send({ type: 'click', button: 'left' });
+      if (gesture.max === 2 && dt < 300) send({ type: 'click', button: 'right' });
+      lastMid = null;
+    }
+  }
+  pad.addEventListener('pointerup', lift);
+  pad.addEventListener('pointercancel', lift);
+</script>
+</body>
+</html>

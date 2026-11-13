@@ -5,11 +5,19 @@
 依赖: pip install pyautogui pyperclip
 """
 import json
+import os
 import socket
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pyautogui
 import pyperclip
+import qrcode
+from PIL import ImageTk
+import tkinter as tk
+
+# index.html 与本文件在同一目录, 这样无论从哪里启动都能找到
+INDEX_PATH = os.path.join(os.path.dirname(__file__), "index.html")
 
 pyautogui.FAILSAFE = False  # 关闭"鼠标甩到屏幕角落就中止程序"的安全机制, 避免误触发
 pyautogui.PAUSE = 0         # 取消每次调用后的默认延时, 让鼠标移动更流畅
@@ -29,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """返回手机端控制页面"""
         if self.path == "/":
-            with open("index.html", "rb") as f:
+            with open(INDEX_PATH, "rb") as f:
                 self._send(200, f.read())
         else:
             self._send(404, b"not found")
@@ -70,9 +78,27 @@ def get_local_ip():
         s.close()
 
 
+def show_qr(url):
+    """弹出二维码窗口, 手机扫码即可连接, 关闭窗口则程序退出"""
+    img = qrcode.make(url).resize((300, 300))  # 生成二维码图片
+    root = tk.Tk()
+    root.title("扫码连接")
+    root.resizable(False, False)
+    photo = ImageTk.PhotoImage(img)  # 保存引用, 防止图片被垃圾回收
+    tk.Label(root, text="手机扫码连接", font=("微软雅黑", 14)).pack(pady=(14, 6))
+    tk.Label(root, image=photo).pack(padx=24, pady=6)
+    tk.Label(root, text=url, font=("Consolas", 12)).pack(pady=(0, 14))
+    root.mainloop()
+
+
+def start(port=8888):
+    """启动服务: 后台线程跑 HTTP 服务, 主线程显示扫码窗口"""
+    url = f"http://{get_local_ip()}:{port}"
+    print(f"手机扫码连接, 或浏览器打开: {url}")
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    show_qr(url)  # 阻塞在扫码窗口, 关闭窗口时程序退出
+
+
 if __name__ == "__main__":
-    port = 8888
-    ip = get_local_ip()
-    print(f"请在手机浏览器打开: http://{ip}:{port}")
-    print("按 Ctrl+C 退出")
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    start()
