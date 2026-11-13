@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- WIME 内置连接页: 输入电脑 IP 后跳转到电脑上的遥控页面 -->
+<!-- WIME 内置连接页: 扫电脑弹窗上的二维码连接, 或手动输入电脑 IP -->
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -9,16 +9,54 @@
 <body style="font-family:sans-serif;background:#1e1e28;color:#eee;margin:0;height:100vh;
              display:flex;flex-direction:column;align-items:center;justify-content:center">
   <h2>WIME 手机遥控</h2>
-  <input id="ip" placeholder="输入电脑 IP, 如 192.168.1.5"
+  <button onclick="scan()"
+          style="padding:14px 56px;font-size:17px;border:none;border-radius:8px;
+                 background:#5a5a7c;color:#eee">扫码连接</button>
+  <video id="cam" autoplay playsinline
+         style="display:none;width:80%;margin-top:16px;border-radius:8px"></video>
+  <p style="color:#666;font-size:13px;margin:20px 0 6px">或手动输入电脑 IP</p>
+  <input id="ip" placeholder="如 192.168.1.5"
          style="padding:12px;font-size:16px;border-radius:8px;border:none;width:280px;text-align:center">
   <button onclick="go()"
-          style="margin-top:14px;padding:12px 48px;font-size:16px;border:none;border-radius:8px;
-                 background:#5a5a7c;color:#eee">连接</button>
+          style="margin-top:10px;padding:10px 40px;font-size:15px;border:none;border-radius:8px;
+                 background:#3a3a4c;color:#eee">连接</button>
 <script>
   ip.value = localStorage.getItem('ip') || '';   // 记住上次输入的 IP
   function go() {
     localStorage.setItem('ip', ip.value);
     location.href = 'http://' + ip.value + ':8888';  // 端口与电脑端 server.py 一致
+  }
+
+  // ===== 扫码: 开摄像头, 用 BarcodeDetector 识别二维码 =====
+  let scanning = false;
+  async function scan() {
+    if (scanning) return;
+    if (!('BarcodeDetector' in window)) { alert('此设备网页不支持扫码, 请手动输入 IP'); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch (e) { alert('打开摄像头失败: ' + e.message); return; }
+    const cam = document.getElementById('cam');
+    cam.srcObject = stream;
+    cam.style.display = 'block';
+    scanning = true;
+    const det = new BarcodeDetector();
+    const stop = () => { scanning = false; stream.getTracks().forEach(t => t.stop());
+                         cam.style.display = 'none'; };
+    const tick = async () => {
+      if (!scanning) return;
+      try {
+        const codes = await det.detect(cam);
+        if (codes.length) {
+          const url = codes[0].rawValue;     // 二维码内容就是电脑地址
+          stop();
+          location.href = /^https?:\/\//.test(url) ? url : 'http://' + url + ':8888';
+          return;
+        }
+      } catch (e) {}
+      setTimeout(tick, 300);                 // 每 300ms 识别一帧
+    };
+    tick();
   }
 </script>
 </body>
