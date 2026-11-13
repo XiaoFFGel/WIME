@@ -24,10 +24,14 @@
   #settings input[type=range] { width: 100%; }
   #settings button { padding: 12px; border: none; border-radius: 8px;
                      background: #3a3a4c; color: #eee; font-size: 16px; }
+  /* 右下角全屏按钮 */
+  #fs { position: absolute; right: 8px; bottom: 8px; width: 46px; height: 46px;
+        border: none; border-radius: 8px; background: rgba(0,0,0,.3);
+        color: #bbb; font-size: 20px; }
+  /* 底部直播输入框 */
   #bar { padding: 0 10px 10px; }
-  .row { display: flex; gap: 8px; margin-bottom: 8px; }
-  #input { flex: 1; padding: 12px; border: none; border-radius: 8px;
-           background: #33333f; color: #eee; font-size: 16px; }
+  #input { width: 100%; box-sizing: border-box; padding: 12px; border: none;
+           border-radius: 8px; background: #33333f; color: #eee; font-size: 16px; }
 </style>
 </head>
 <body>
@@ -42,11 +46,10 @@
       <input type="range" id="ssens" min="0.5" max="3" step="0.1">
       <button id="close">关闭</button>
     </div>
+    <button id="fs">⛶</button>
   </div>
   <div id="bar">
-    <div class="row">
-      <input id="input" placeholder="直播输入: 打字实时传到电脑">
-    </div>
+    <input id="input" placeholder="直播输入: 打字实时传到电脑">
   </div>
 <script>
   const pad = document.getElementById('pad');
@@ -170,10 +173,23 @@
   // 阻止面板/按钮上的触摸触发触屏板手势
   settings.addEventListener('pointerdown', e => e.stopPropagation());
   gear.addEventListener('pointerdown', e => e.stopPropagation());
+  fs.addEventListener('pointerdown', e => e.stopPropagation());
 
   // 点齿轮打开面板, 点关闭收起
   gear.addEventListener('click', () => settings.classList.add('show'));
   document.getElementById('close').addEventListener('click', () => settings.classList.remove('show'));
+
+  // 全屏按钮: 切换浏览器全屏(网页元素全屏, App 内由 WebView 自定义视图承载)
+  fs.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  });
+
+  // 全屏时只留触摸板, 隐藏输入框; 退出全屏恢复
+  document.addEventListener('fullscreenchange', () => {
+    document.getElementById('bar').style.display =
+        document.fullscreenElement ? 'none' : '';
+  });
 
   // 滑块变化: 更新灵敏度并保存
   msens.addEventListener('input', () => {

@@ -12,48 +12,94 @@
   <button onclick="scan()"
           style="padding:14px 56px;font-size:17px;border:none;border-radius:8px;
                  background:#5a5a7c;color:#eee">扫码连接</button>
-  <video id="cam" autoplay playsinline
-         style="display:none;width:80%;margin-top:16px;border-radius:8px"></video>
+  <video id="cam" autoplay playsinline style="display:none"></video>
+  <canvas id="prev" style="display:none;width:80%;margin-top:16px;border-radius:8px"></canvas>
   <p style="color:#666;font-size:13px;margin:20px 0 6px">或手动输入电脑 IP</p>
   <input id="ip" placeholder="如 192.168.1.5"
          style="padding:12px;font-size:16px;border-radius:8px;border:none;width:280px;text-align:center">
   <button onclick="go()"
           style="margin-top:10px;padding:10px 40px;font-size:15px;border:none;border-radius:8px;
                  background:#3a3a4c;color:#eee">连接</button>
+<script src="jsQR.js"></script>  <!-- 纯 JS 二维码识别, 不依赖系统服务 -->
 <script>
   ip.value = localStorage.getItem('ip') || '';   // 记住上次输入的 IP
   function go() {
     localStorage.setItem('ip', ip.value);
-    location.href = 'http://' + ip.value + ':8888';  // 端口与电脑端 server.py 一致
+    const url = 'http://' + ip.value + ':8888';  // 端口与电脑端 server.py 一致
+    if (window.Wime) Wime.connect(url);          // App 里走原生桥接跳转
+    else location.href = url;                    // 普通浏览器直接跳
   }
 
-  // ===== 扫码: 开摄像头, 用 BarcodeDetector 识别二维码 =====
+  // ===== 扫码: 开摄像头, 逐帧用 jsQR 识别二维码 =====
   let scanning = false;
   async function scan() {
     if (scanning) return;
-    if (!('BarcodeDetector' in window)) { alert('此设备网页不支持扫码, 请手动输入 IP'); return; }
+    if (typeof jsQR !== 'function') { alert('识别库加载失败, 请手动输入 IP'); return; }
+    scanning = true;                         // 先占位, 防止连点开出多个流
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    } catch (e) { alert('打开摄像头失败: ' + e.message); return; }
+      stream = await navigator.mediaDevices.getUserMedia({ video: {
+        facingMode: 'environment',
+        width: { ideal: 1280 }, height: { ideal: 720 }   // 高分辨率, 二维码更清晰
+      } });
+    } catch (e) { scanning = false; alert('打开摄像头失败: ' + e.message); return; }
+    console.log('WIME-SCAN: getUserMedia 成功');
     const cam = document.getElementById('cam');
-    cam.srcObject = stream;
-    cam.style.display = 'block';
-    scanning = true;
-    const det = new BarcodeDetector();
+    const prev = document.getElementById('prev');   // 预览画布(video 元素在部分机型渲染黑屏)
+    const pctx = prev.getContext('2d');
+    cam.srcObject = stream;                          // 只取流, video 本身不显示
+    prev.style.display = 'block';
+    cam.play().then(() => console.log('WIME-SCAN: 视频开始播放'))
+              .catch(e => console.log('WIME-SCAN: play 失败 ' + e.message));
+    const cv = document.createElement('canvas');   // 离屏画布, 取视频帧给 jsQR
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    const cv2 = document.createElement('canvas');  // 半尺寸画布, 多尺度识别
+    const cx2 = cv2.getContext('2d', { willReadFrequently: true });
+    let logT = 0;
     const stop = () => { scanning = false; stream.getTracks().forEach(t => t.stop());
-                         cam.style.display = 'none'; };
-    const tick = async () => {
+                         prev.style.display = 'none'; };
+    // 预览循环: 与识别分离, 按显示帧率全速绘制, 保证流畅
+    const drawPrev = () => {
       if (!scanning) return;
-      try {
-        const codes = await det.detect(cam);
-        if (codes.length) {
-          const url = codes[0].rawValue;     // 二维码内容就是电脑地址
-          stop();
-          location.href = /^https?:\/\//.test(url) ? url : 'http://' + url + ':8888';
-          return;
+      if (cam.videoWidth) {
+        if (prev.width !== 480) {
+          prev.width = 480;
+          prev.height = Math.round(480 * cam.videoHeight / cam.videoWidth);
         }
-      } catch (e) {}
+        pctx.drawImage(cam, 0, 0, prev.width, prev.height);
+      }
+      requestAnimationFrame(drawPrev);
+    };
+    requestAnimationFrame(drawPrev);
+    const tick = () => {
+      if (!scanning) return;
+      if (cam.readyState < 2 || !cam.videoWidth) { setTimeout(tick, 300); return; }
+      cv.width = cam.videoWidth; cv.height = cam.videoHeight;
+      cx.drawImage(cam, 0, 0);
+      const frame = cx.getImageData(0, 0, cv.width, cv.height);
+      // 全尺寸 + 半尺寸两种尺度, 黑白双色都试
+      const code = jsQR(frame.data, cv.width, cv.height, { inversionAttempts: 'attemptBoth' })
+                || (() => {
+                     cv2.width = cv.width / 2; cv2.height = cv.height / 2;
+                     cx2.drawImage(cam, 0, 0, cv2.width, cv2.height);
+                     const f2 = cx2.getImageData(0, 0, cv2.width, cv2.height);
+                     return jsQR(f2.data, cv2.width, cv2.height, { inversionAttempts: 'attemptBoth' });
+                   })();
+      if (code && code.data) {
+        const url = code.data;               // 二维码内容就是电脑地址
+        console.log('WIME-SCAN: 识别到二维码 ' + url);
+        stop();
+        const full = /^https?:\/\//.test(url) ? url : 'http://' + url + ':8888';
+        if (window.Wime) Wime.connect(full); // App 里走原生桥接跳转
+        else location.href = full;           // 普通浏览器直接跳
+        return;
+      }
+      if (Date.now() - logT > 2000) {        // 每 2 秒诊断一次画面内容
+        logT = Date.now();
+        const d = frame.data; let sum = 0;   // 抽样算亮度, 判断摄像头帧是否有内容
+        for (let i = 0; i < d.length; i += 40000 * 4) sum += d[i];
+        console.log('WIME-SCAN: ' + cv.width + 'x' + cv.height + ' 帧亮度=' + sum);
+      }
       setTimeout(tick, 300);                 // 每 300ms 识别一帧
     };
     tick();

@@ -117,18 +117,21 @@ def main():
          "--manifest", os.path.join(SRC, "AndroidManifest.xml"),
          "-A", os.path.join(SRC, "assets")], "aapt2 链接资源")
 
-    # 2. 编译 Java 代码
+    # 2. 编译 Java 代码 (源码目录下所有 .java)
     obj = os.path.join(BUILD, "obj")
     shutil.rmtree(obj, ignore_errors=True)
     os.makedirs(obj)
+    sources = glob.glob(os.path.join(SRC, "java", "**", "*.java"), recursive=True)
     run(["javac", "--release", "8", "-encoding", "UTF-8",
-         "-classpath", android_jar, "-d", obj,
-         os.path.join(SRC, "java", "com", "wime", "app", "MainActivity.java")],
-        "javac 编译")
+         "-classpath", android_jar, "-d", obj] + sources, "javac 编译")
 
-    # 3. 转成 dex
-    run([d8, "--release", "--lib", android_jar, "--output", BUILD,
-         os.path.join(obj, "com", "wime", "app", "MainActivity.class")], "d8 转 dex")
+    # 3. 转成 dex (d8 逐个喂内部类 class 会报内部错误, 打成 zip 传给它)
+    classes = glob.glob(os.path.join(obj, "**", "*.class"), recursive=True)
+    jar = os.path.join(BUILD, "classes.zip")
+    with zipfile.ZipFile(jar, "w") as f:
+        for c in classes:
+            f.write(c, os.path.relpath(c, obj))
+    run([d8, "--release", "--lib", android_jar, "--output", BUILD, jar], "d8 转 dex")
 
     # 4. 把 classes.dex 塞进 apk
     with zipfile.ZipFile(unsigned, "a") as f:

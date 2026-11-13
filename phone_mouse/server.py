@@ -10,6 +10,8 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from PIL import Image  # 二维码缩放用
+
 import pyautogui
 import pyperclip
 import qrcode
@@ -80,14 +82,16 @@ def get_local_ip():
 
 def show_qr(url):
     """弹出二维码窗口, 手机扫码即可连接, 关闭窗口则程序退出"""
-    img = qrcode.make(url).resize((300, 300))  # 生成二维码图片
+    img = qrcode.make(url).resize((420, 420), Image.NEAREST)  # 大尺寸加锐利, 方便手机识别
     root = tk.Tk()
     root.title("扫码连接")
+    root.attributes("-topmost", True)  # 窗口置顶, 不被其他窗口挡住
     root.resizable(False, False)
     photo = ImageTk.PhotoImage(img)  # 保存引用, 防止图片被垃圾回收
-    tk.Label(root, text="手机扫码连接", font=("微软雅黑", 14)).pack(pady=(14, 6))
-    tk.Label(root, image=photo).pack(padx=24, pady=6)
-    tk.Label(root, text=url, font=("Consolas", 12)).pack(pady=(0, 14))
+    tk.Label(root, text="手机扫码连接", font=("微软雅黑", 14), bg="white").pack(
+        pady=(14, 6), fill="x")
+    tk.Label(root, image=photo, bg="white").pack(padx=24, pady=6)
+    tk.Label(root, text=url, font=("Consolas", 12), bg="white").pack(pady=(0, 14))
     root.mainloop()
 
 

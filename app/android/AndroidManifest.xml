@@ -10,8 +10,13 @@
 
     <application
         android:label="WIME"
+        android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="true">
-        <activity android:name=".MainActivity" android:exported="true">
+        <!-- configChanges: 横竖屏切换不重建 Activity, 避免网页连接断开;
+             windowSoftInputMode: 输入框获得焦点时正常弹出输入法并压缩窗口 -->
+        <activity android:name=".MainActivity" android:exported="true"
+                  android:configChanges="orientation|screenSize|keyboardHidden"
+                  android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
