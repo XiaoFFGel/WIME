@@ -8,6 +8,7 @@ import configparser
 import json
 import os
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -21,12 +22,29 @@ import qrcode
 from PIL import ImageTk
 import tkinter as tk
 
-# index.html 与本文件在同一目录, 这样无论从哪里启动都能找到
-INDEX_PATH = os.path.join(os.path.dirname(__file__), "index.html")
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.ini")  # 配置文件名
+
+def resource_path(name):
+    """只读资源(网页/托盘图)的路径: 打包成 exe 后在临时解压目录, 源码运行在本目录"""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "phone_mouse", name)
+
+
+def app_dir():
+    """程序所在目录: exe 旁边, 或者源码目录; 用户可改的配置放这里"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+INDEX_PATH = resource_path("index.html")
+CONFIG_PATH = os.path.join(app_dir(), "config.ini")  # 配置文件放 exe 旁边方便修改
 
 DISCOVER_PORT = 9999        # 手机自动发现电脑用的 UDP 端口
 DISCOVER_MAGIC = b"WIME_DISCOVER"  # 手机广播的探测内容
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"  # 开机启动项的注册表位置
+RUN_NAME = "WIME"
+MUTEX_NAME = "WIME_SINGLE_INSTANCE"  # 互斥体名字, 用来保证同一时间只有一个 WIME 在运行
 
 pyautogui.FAILSAFE = False  # 关闭"鼠标甩到屏幕角落就中止程序"的安全机制, 避免误触发
 pyautogui.PAUSE = 0         # 取消每次调用后的默认延时, 让鼠标移动更流畅
@@ -107,16 +125,58 @@ def show_qr(url):
     root.mainloop()
 
 
+CONFIG_TEMPLATE = """# WIME 电脑端配置
+[server]
+# HTTP 服务端口, 手机连接时用这个端口
+port = 8888
+# 启动时是否弹出二维码窗口
+# true  = 弹窗显示二维码, 手机可扫码连接
+# false = 不弹窗, 手机打开 App 会自动搜索到本机并直接连接
+show_qr = false
+# 是否开机自动启动 (仅打包后的 WIME.exe 生效)
+# true  = 开机自动在托盘运行; false = 取消开机启动
+# 修改后需重启 WIME.exe 才生效
+auto_start = false
+"""
+
+
 def load_config():
-    """读取 config.ini, 文件不存在时自动生成一份默认配置"""
-    cfg = configparser.ConfigParser()
-    if os.path.exists(CONFIG_PATH):
-        cfg.read(CONFIG_PATH, encoding="utf-8")
-    if not cfg.has_section("server"):
-        cfg["server"] = {"port": "8888", "show_qr": "true"}
+    """读取 config.ini, 文件不存在时按带注释的模板生成一份"""
+    if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            cfg.write(f)
+            f.write(CONFIG_TEMPLATE)   # 写模板而不是 cfg.write, 否则注释会丢
+    cfg = configparser.ConfigParser()
+    try:
+        cfg.read(CONFIG_PATH, encoding="utf-8-sig")  # 兼容记事本另存为"UTF-8 带 BOM"
+    except UnicodeDecodeError:
+        cfg = configparser.ConfigParser()
+        cfg.read(CONFIG_PATH, encoding="gbk")        # 兼容记事本另存为 ANSI
+    if not cfg.has_section("server"):
+        # 文件被改坏时兜底, 避免后面取配置报错
+        cfg["server"] = {"port": "8888", "show_qr": "false", "auto_start": "false"}
     return cfg
+
+
+def set_auto_start(enable):
+    """按配置写入/删除开机启动项: 只对打包后的 exe 生效, 源码运行不做处理"""
+    if not getattr(sys, "frozen", False):
+        if enable:
+            print("源码运行时无法设置开机启动, 请使用打包后的 WIME.exe")
+        return
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            if enable:
+                winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, f'"{sys.executable}"')
+                print("已设置开机自动启动")
+            else:
+                try:
+                    winreg.DeleteValue(key, RUN_NAME)
+                    print("已取消开机自动启动")
+                except FileNotFoundError:
+                    pass
+    except OSError as e:
+        print(f"开机启动设置失败: {e}")
 
 
 def udp_discover(port):
@@ -141,8 +201,8 @@ def udp_discover(port):
 
 
 def make_tray_icon():
-    """托盘图标: 优先用同目录的 tray.png, 没有就用代码画的简版"""
-    path = os.path.join(os.path.dirname(__file__), "tray.png")
+    """托盘图标: 优先用打包进来的 tray.png, 没有就用代码画的简版"""
+    path = resource_path("tray.png")
     if os.path.exists(path):
         return Image.open(path).convert("RGBA")
     from PIL import ImageDraw, ImageFont
@@ -194,11 +254,26 @@ def run_tray(url):
     icon.run(setup=setup)   # 阻塞在这里, 托盘常驻
 
 
+def already_running():
+    """是否已有 WIME 在运行: 用 Windows 命名互斥体判断, 进程退出时系统自动释放"""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateMutexW.restype = ctypes.c_void_p   # 64 位下句柄不能用默认的 int, 会截断
+    k32.CreateMutexW(None, False, MUTEX_NAME)    # 句柄不关闭, 随进程退出自动释放
+    return ctypes.get_last_error() == 183        # 183 = ERROR_ALREADY_EXISTS
+
+
 def start():
     """启动服务: HTTP 服务 + UDP 自动发现, 二维码窗口是否弹出由 config.ini 控制"""
+    if already_running():          # 双击多次时只保留第一个实例
+        print("WIME 已在运行, 本次启动自动退出")
+        return
     cfg = load_config()
     port = cfg["server"].getint("port", fallback=8888)
     show_qr_flag = cfg["server"].getboolean("show_qr", fallback=True)
+    set_auto_start(cfg["server"].getboolean("auto_start", fallback=False))
     url = f"http://{get_local_ip()}:{port}"
     print(f"手机自动发现或手动输入: {url}")
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
