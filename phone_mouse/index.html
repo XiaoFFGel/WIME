@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 手机端控制页面: 触屏区控制鼠标, 下方按钮发送按键和文字 -->
+<!-- 手机端控制页面: 触屏区控制鼠标, 下方输入框发送文字 -->
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -29,19 +29,6 @@
       <input id="input" placeholder="输入文字后点发送(支持中文)">
       <button onclick="sendText()">发送</button>
     </div>
-    <div class="row">
-      <button onclick="sendKey('esc')">Esc</button>
-      <button onclick="sendKey('tab')">Tab</button>
-      <button onclick="sendKey('backspace')">退格</button>
-      <button onclick="sendKey('enter')">回车</button>
-      <button onclick="sendKey('delete')">Del</button>
-    </div>
-    <div class="row">
-      <button onclick="sendKey('left')">←</button>
-      <button onclick="sendKey('up')">↑</button>
-      <button onclick="sendKey('down')">↓</button>
-      <button onclick="sendKey('right')">→</button>
-    </div>
   </div>
 <script>
   const pad = document.getElementById('pad');
@@ -53,7 +40,6 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data) });
   }
-  const sendKey = k => send({ type: 'key', key: k });
   function sendText() {
     if (input.value) { send({ type: 'text', text: input.value }); input.value = ''; }
     input.blur();  // 收起手机键盘
@@ -72,7 +58,7 @@
     return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   }
 
-  // 每 30ms 批量发送一次位移/滚动, 避免请求过多
+  // 每 10ms 批量发送一次位移/滚动
   setInterval(() => {
     if (moveX || moveY) {
       send({ type: 'move', dx: Math.round(moveX), dy: Math.round(moveY) });
@@ -82,7 +68,7 @@
       send({ type: 'scroll', dy: Math.round(scrollY / 20) });
       scrollY = 0;
     }
-  }, 30);
+  }, 10); // 10ms
 
   pad.addEventListener('pointerdown', e => {
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
