@@ -2,3 +2,5 @@
 /.screenshots/
 /dist/
 /build_exe/
+__pycache__/
+*.py[cod]
