@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<!-- WIME 内置连接页: 输入电脑 IP 后跳转到电脑上的遥控页面 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WIME</title>
+</head>
+<body style="font-family:sans-serif;background:#1e1e28;color:#eee;margin:0;height:100vh;
+             display:flex;flex-direction:column;align-items:center;justify-content:center">
+  <h2>WIME 手机遥控</h2>
+  <input id="ip" placeholder="输入电脑 IP, 如 192.168.1.5"
+         style="padding:12px;font-size:16px;border-radius:8px;border:none;width:280px;text-align:center">
+  <button onclick="go()"
+          style="margin-top:14px;padding:12px 48px;font-size:16px;border:none;border-radius:8px;
+                 background:#5a5a7c;color:#eee">连接</button>
+<script>
+  ip.value = localStorage.getItem('ip') || '';   // 记住上次输入的 IP
+  function go() {
+    localStorage.setItem('ip', ip.value);
+    location.href = 'http://' + ip.value + ':8888';  // 端口与电脑端 server.py 一致
+  }
+</script>
+</body>
+</html>
