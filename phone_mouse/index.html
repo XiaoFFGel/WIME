@@ -12,22 +12,40 @@
   /* 触屏板: 单指拖动=移动鼠标, 单指点按=左键, 双指点按=右键, 双指拖动=滚轮 */
   #pad { flex: 1; background: #2a2a38; border-radius: 12px; margin: 10px;
          touch-action: none; display: flex; align-items: center; justify-content: center;
-         color: #666; font-size: 14px; text-align: center; }
+         color: #666; font-size: 14px; text-align: center; position: relative; }
+  /* 左上角设置按钮和设置面板 */
+  #gear { position: absolute; top: 8px; left: 8px; width: 42px; height: 42px;
+          border: none; border-radius: 8px; background: rgba(0,0,0,.3);
+          color: #bbb; font-size: 20px; }
+  #settings { position: absolute; inset: 0; background: #2a2a38; border-radius: 12px;
+              padding: 28px; display: none; flex-direction: column; gap: 14px;
+              color: #ddd; font-size: 16px; }
+  #settings.show { display: flex; }
+  #settings input[type=range] { width: 100%; }
+  #settings button { padding: 12px; border: none; border-radius: 8px;
+                     background: #3a3a4c; color: #eee; font-size: 16px; }
   #bar { padding: 0 10px 10px; }
   .row { display: flex; gap: 8px; margin-bottom: 8px; }
-  button { flex: 1; padding: 14px 0; border: none; border-radius: 8px;
-           background: #3a3a4c; color: #eee; font-size: 16px; }
-  button:active { background: #5a5a7c; }
-  #input { flex: 4; padding: 12px; border: none; border-radius: 8px;
+  #input { flex: 1; padding: 12px; border: none; border-radius: 8px;
            background: #33333f; color: #eee; font-size: 16px; }
 </style>
 </head>
 <body>
-  <div id="pad">单指拖动:移动 | 单指点击:左键<br>双指点击:右键 | 双指拖动:滚轮</div>
+  <div id="pad">
+    <button id="gear">⚙</button>
+    单指拖动:移动 | 单指点击:左键<br>双指点击:右键 | 双指拖动:滚轮
+    <div id="settings">
+      <b>设置</b>
+      <label>鼠标灵敏度 <span id="mv">1.0</span></label>
+      <input type="range" id="msens" min="0.5" max="3" step="0.1">
+      <label>滚轮灵敏度 <span id="sv">1.0</span></label>
+      <input type="range" id="ssens" min="0.5" max="3" step="0.1">
+      <button id="close">关闭</button>
+    </div>
+  </div>
   <div id="bar">
     <div class="row">
-      <input id="input" placeholder="输入文字后点发送(支持中文)">
-      <button onclick="sendText()">发送</button>
+      <input id="input" placeholder="直播输入: 打字实时传到电脑">
     </div>
   </div>
 <script>
@@ -40,10 +58,37 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data) });
   }
-  function sendText() {
-    if (input.value) { send({ type: 'text', text: input.value }); input.value = ''; }
-    input.blur();  // 收起手机键盘
+  // ===== 直播输入: 不清空输入框, 只对比差异发给电脑, 保留输入法联想 =====
+  let prev = '';          // 上次输入框内容, 用于算出新增/删除部分
+  let composing = false;  // 是否正在用输入法组合中文
+  input.addEventListener('compositionstart', () => composing = true);
+  input.addEventListener('compositionend', () => { composing = false; syncInput(); });
+  input.addEventListener('input', syncInput);
+
+  function syncInput() {
+    if (composing) return;               // 组合中的拼音等组合完再发
+    const cur = input.value;
+    let p = 0;                           // 求新旧内容的公共前缀长度
+    while (p < prev.length && p < cur.length && prev[p] === cur[p]) p++;
+    const del = prev.length - p;         // 被删掉的字符数
+    const add = cur.slice(p);            // 新增的文字
+    if (del) send({ type: 'key', key: 'backspace', count: del });
+    if (add) send({ type: 'text', text: add });
+    prev = cur;
   }
+
+  // 回车: 发送回车键并清空输入框重新开始; 空框时按退格直接发给电脑
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      send({ type: 'key', key: 'enter' });
+      input.value = '';
+      prev = '';                             // 重置对比基准, 后续按新增内容发送
+      e.preventDefault();
+    } else if (e.key === 'Backspace' && !input.value) {
+      send({ type: 'key', key: 'backspace' });
+      e.preventDefault();
+    }
+  });
 
   // ===== 触屏板逻辑 =====
   const pts = new Map();            // 当前按下的手指 {id: {x, y}}
@@ -64,8 +109,8 @@
       send({ type: 'move', dx: Math.round(moveX), dy: Math.round(moveY) });
       moveX = moveY = 0;
     }
-    if (Math.abs(scrollY) >= 5) {          // 累积够一点再发, 20px 约等于一格滚轮
-      send({ type: 'scroll', dy: Math.round(scrollY / 20) });
+    if (Math.abs(scrollY) >= 5) {          // 累积够一点再发, 1px 约等于一格滚轮
+      send({ type: 'scroll', dy: Math.round(scrollY / 1) });
       scrollY = 0;
     }
   }, 10); // 10ms
@@ -82,12 +127,12 @@
     if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     p.x = e.clientX; p.y = e.clientY;
-    if (pts.size === 1) {                  // 单指: 累积鼠标位移
-      moveX += dx; moveY += dy;
+    if (pts.size === 1) {                  // 单指: 累积鼠标位移(乘灵敏度)
+      moveX += dx * mouseSens; moveY += dy * mouseSens;
       gesture.dist += Math.abs(dx) + Math.abs(dy);
-    } else if (pts.size === 2) {           // 双指: 累积滚动量
+    } else if (pts.size === 2) {           // 双指: 累积滚动量(乘灵敏度)
       const m = mid();
-      scrollY += m.y - lastMid.y;
+      scrollY += (m.y - lastMid.y) * scrollSens;
       lastMid = m;
     }
   });
@@ -104,6 +149,43 @@
   }
   pad.addEventListener('pointerup', lift);
   pad.addEventListener('pointercancel', lift);
+
+  // ===== 设置面板: 调整鼠标/滚轮灵敏度, 保存到手机本地 =====
+  const settings = document.getElementById('settings');
+  const gear = document.getElementById('gear');
+  let mouseSens = +(localStorage.getItem('msens') || 1);   // 鼠标灵敏度
+  let scrollSens = +(localStorage.getItem('ssens') || 1);  // 滚轮灵敏度
+  const msens = document.getElementById('msens');
+  const ssens = document.getElementById('ssens');
+
+  // 把当前灵敏度同步到滑块和数值显示
+  function showVals() {
+    msens.value = mouseSens;
+    ssens.value = scrollSens;
+    document.getElementById('mv').textContent = mouseSens.toFixed(1);
+    document.getElementById('sv').textContent = scrollSens.toFixed(1);
+  }
+  showVals();
+
+  // 阻止面板/按钮上的触摸触发触屏板手势
+  settings.addEventListener('pointerdown', e => e.stopPropagation());
+  gear.addEventListener('pointerdown', e => e.stopPropagation());
+
+  // 点齿轮打开面板, 点关闭收起
+  gear.addEventListener('click', () => settings.classList.add('show'));
+  document.getElementById('close').addEventListener('click', () => settings.classList.remove('show'));
+
+  // 滑块变化: 更新灵敏度并保存
+  msens.addEventListener('input', () => {
+    mouseSens = +msens.value;
+    localStorage.setItem('msens', mouseSens);
+    document.getElementById('mv').textContent = mouseSens.toFixed(1);
+  });
+  ssens.addEventListener('input', () => {
+    scrollSens = +ssens.value;
+    localStorage.setItem('ssens', scrollSens);
+    document.getElementById('sv').textContent = scrollSens.toFixed(1);
+  });
 </script>
 </body>
 </html>

@@ -59,8 +59,8 @@ class Handler(BaseHTTPRequestHandler):
             if text:
                 pyperclip.copy(text)
                 pyautogui.hotkey("ctrl", "v")
-        elif t == "key":     # 特殊按键: enter / esc / up 等
-            pyautogui.press(data.get("key"))
+        elif t == "key":     # 特殊按键: enter / esc / up 等, count 为连按次数
+            pyautogui.press(data.get("key"), presses=data.get("count", 1))
         self._send(200, b"ok", "text/plain")
 
     def log_message(self, *args):
