@@ -28,9 +28,10 @@
   #fs { position: absolute; right: 8px; bottom: 8px; width: 46px; height: 46px;
         border: none; border-radius: 8px; background: rgba(0,0,0,.3);
         color: #bbb; font-size: 20px; }
-  /* 底部直播输入框 */
-  #bar { padding: 0 10px 10px; }
-  #input { width: 100%; box-sizing: border-box; padding: 12px; border: none;
+  /* 全屏状态下隐藏输入框(App 由 body.full 控制, 浏览器由 fullscreenchange 控制) */
+  body.full #bar { display: none !important; }
+  #bar { padding: 4px 10px 14px; }
+  #input { width: 100%; box-sizing: border-box; padding: 15px 12px; border: none;
            border-radius: 8px; background: #33333f; color: #eee; font-size: 16px; }
 </style>
 </head>
@@ -61,34 +62,67 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data) });
   }
+  // 文字/按键指令排队串行发送, 保证顺序(粘贴需要时间, 并发会丢字乱序)
+  const textQueue = [];
+  let sending = false;
+  function sendText(data) {
+    textQueue.push(data);
+    if (!sending) pump();
+  }
+  async function pump() {
+    sending = true;
+    while (textQueue.length) {
+      try {
+        await fetch('/api', { method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify(textQueue[0]) });
+      } catch (e) {}
+      textQueue.shift();                   // 发送成功才出队, 失败也出队避免卡死
+    }
+    sending = false;
+  }
+
   // ===== 直播输入: 不清空输入框, 只对比差异发给电脑, 保留输入法联想 =====
   let prev = '';          // 上次输入框内容, 用于算出新增/删除部分
   let composing = false;  // 是否正在用输入法组合中文
+  let pendingAdd = '';    // 待发送的新增文字
+  let pendingDel = 0;     // 待发送的退格次数
+  let timer = null;       // 防抖定时器, 短时间内的输入合并成一次
+
   input.addEventListener('compositionstart', () => composing = true);
   input.addEventListener('compositionend', () => { composing = false; syncInput(); });
   input.addEventListener('input', syncInput);
+
+  // 把累积的删除/新增一次性发出去
+  function flush() {
+    timer = null;
+    if (pendingDel) { sendText({ type: 'key', key: 'backspace', count: pendingDel }); pendingDel = 0; }
+    if (pendingAdd) { sendText({ type: 'text', text: pendingAdd }); pendingAdd = ''; }
+  }
 
   function syncInput() {
     if (composing) return;               // 组合中的拼音等组合完再发
     const cur = input.value;
     let p = 0;                           // 求新旧内容的公共前缀长度
     while (p < prev.length && p < cur.length && prev[p] === cur[p]) p++;
-    const del = prev.length - p;         // 被删掉的字符数
-    const add = cur.slice(p);            // 新增的文字
-    if (del) send({ type: 'key', key: 'backspace', count: del });
-    if (add) send({ type: 'text', text: add });
+    pendingDel += prev.length - p;       // 被删掉的字符数
+    pendingAdd += cur.slice(p);          // 新增的文字
     prev = cur;
+    if (!timer) timer = setTimeout(flush, 80);   // 80ms 内连续输入合并
   }
 
-  // 回车: 发送回车键并清空输入框重新开始; 空框时按退格直接发给电脑
+  // 回车: 先发完待发送文字, 再发回车并清空输入框; 空框时按退格直接发给电脑
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
-      send({ type: 'key', key: 'enter' });
+      if (timer) { clearTimeout(timer); timer = null; }
+      flush();
+      sendText({ type: 'key', key: 'enter' });
       input.value = '';
       prev = '';                             // 重置对比基准, 后续按新增内容发送
+      pendingAdd = ''; pendingDel = 0;
       e.preventDefault();
     } else if (e.key === 'Backspace' && !input.value) {
-      send({ type: 'key', key: 'backspace' });
+      sendText({ type: 'key', key: 'backspace' });
       e.preventDefault();
     }
   });
@@ -179,10 +213,16 @@
   gear.addEventListener('click', () => settings.classList.add('show'));
   document.getElementById('close').addEventListener('click', () => settings.classList.remove('show'));
 
-  // 全屏按钮: 切换浏览器全屏(网页元素全屏, App 内由 WebView 自定义视图承载)
+  // 全屏按钮: App 里走原生沉浸模式, 浏览器里走网页全屏 API
   fs.addEventListener('click', () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen();
+    if (window.Wime) {
+      Wime.toggleFullscreen();                 // 原生切全屏, 不动视图结构
+      document.body.classList.toggle('full');  // 隐藏/恢复输入框
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      document.documentElement.requestFullscreen();
+    }
   });
 
   // 全屏时只留触摸板, 隐藏输入框; 退出全屏恢复

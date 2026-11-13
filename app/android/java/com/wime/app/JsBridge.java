@@ -2,29 +2,38 @@ package com.wime.app;
 
 import android.util.Log;
 import android.webkit.JavascriptInterface;
-import android.webkit.WebView;
 
-/** 暴露给网页 JS 的桥接: 由原生代码完成跳转(WebView 会拦截 file 页的 http 跳转) */
+/** JS 桥接: 连接电脑地址 / 切换全屏, 动作串行化后切到 UI 线程执行 */
 class JsBridge implements Runnable {
 
-    private final WebView web;
-    private String url;  // 待加载的电脑地址
+    private final MainActivity act;
+    private String action = "";  // 待执行动作
 
-    JsBridge(WebView web) {
-        this.web = web;
+    JsBridge(MainActivity act) {
+        this.act = act;
     }
 
     /** 网页扫码成功后调用, 跳到电脑地址 */
     @JavascriptInterface
-    public void connect(String u) {
-        Log.i("WIME-NATIVE", "桥接收到的地址: " + u);
-        url = u;
-        web.post(this);  // 切回 UI 线程再加载
+    public void connect(String url) {
+        Log.i("WIME-NATIVE", "桥接收到的地址: " + url);
+        action = "connect:" + url;
+        act.runOnUiThread(this);
+    }
+
+    /** 网页点全屏按钮调用, 原生切沉浸模式(不动视图结构, 输入法不受影响) */
+    @JavascriptInterface
+    public void toggleFullscreen() {
+        action = "fullscreen";
+        act.runOnUiThread(this);
     }
 
     @Override
     public void run() {
-        Log.i("WIME-NATIVE", "开始加载: " + url);
-        web.loadUrl(url);
+        if (action.startsWith("connect:")) {
+            act.loadRemote(action.substring(8));
+        } else {
+            act.toggleImmersive();
+        }
     }
 }

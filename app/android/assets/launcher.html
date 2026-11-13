@@ -9,6 +9,8 @@
 <body style="font-family:sans-serif;background:#1e1e28;color:#eee;margin:0;height:100vh;
              display:flex;flex-direction:column;align-items:center;justify-content:center">
   <h2>WIME 手机遥控</h2>
+  <div id="status" style="color:#9aa;font-size:14px;margin:0 0 8px">正在搜索电脑...</div>
+  <div id="list" style="width:280px"></div>
   <button onclick="scan()"
           style="padding:14px 56px;font-size:17px;border:none;border-radius:8px;
                  background:#5a5a7c;color:#eee">扫码连接</button>
@@ -23,12 +25,56 @@
 <script src="jsQR.js"></script>  <!-- 纯 JS 二维码识别, 不依赖系统服务 -->
 <script>
   ip.value = localStorage.getItem('ip') || '';   // 记住上次输入的 IP
+
+  // 统一的连接入口: App 里走原生桥接跳转, 普通浏览器直接跳
+  function connect(ipAddr) {
+    const url = 'http://' + ipAddr + ':8888';     // 端口与电脑端 server.py 一致
+    if (window.Wime) Wime.connect(url);
+    else location.href = url;
+  }
+
   function go() {
     localStorage.setItem('ip', ip.value);
-    const url = 'http://' + ip.value + ':8888';  // 端口与电脑端 server.py 一致
-    if (window.Wime) Wime.connect(url);          // App 里走原生桥接跳转
-    else location.href = url;                    // 普通浏览器直接跳
+    connect(ip.value);
   }
+
+  // ===== 自动发现: 一台直接连, 多台列出来让用户选 =====
+  function autoFind() {
+    const st = document.getElementById('status');
+    document.getElementById('list').innerHTML = '';
+    if (!window.WimeDiscover) { st.textContent = ''; return; }  // 浏览器不支持, 直接手动
+    st.textContent = '正在搜索电脑...';
+    WimeDiscover.find();               // 原生广播搜索, 结果回调 onDiscover()
+  }
+
+  // 原生搜索完成后调用(全局函数, 由 Java 注入)
+  function onDiscover(jsonStr) {
+    const st = document.getElementById('status');
+    const box = document.getElementById('list');
+    box.innerHTML = '';
+    let list = [];
+    try { list = JSON.parse(jsonStr || '[]'); } catch (e) {}
+    if (list.length === 0) {
+      st.textContent = '没找到电脑, 请确认手机和电脑连同一个 Wi-Fi';
+      return;
+    }
+    if (list.length === 1) {                  // 只有一台, 直接连
+      st.textContent = '找到电脑, 正在连接...';
+      connect(list[0].ip);
+      return;
+    }
+    st.textContent = '找到 ' + list.length + ' 台电脑, 请选择:';   // 多台, 让用户选
+    list.forEach(d => {
+      const b = document.createElement('button');
+      b.textContent = (d.name || '电脑') + '  ' + d.ip;
+      b.style.cssText = 'display:block;width:100%;margin:6px 0;padding:12px;border:none;' +
+                        'border-radius:8px;background:#5a5a7c;color:#eee;font-size:15px';
+      b.onclick = () => { localStorage.setItem('ip', d.ip); connect(d.ip); };
+      box.appendChild(b);
+    });
+  }
+
+  autoFind();   // 打开页面就开始搜索
 
   // ===== 扫码: 开摄像头, 逐帧用 jsQR 识别二维码 =====
   let scanning = false;

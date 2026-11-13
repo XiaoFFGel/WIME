@@ -111,11 +111,19 @@ def main():
     apksigner = os.path.join(bt_dir, "apksigner.bat")
     keystore = os.path.join(BUILD, "wime.keystore")
 
-    # 1. 编译资源并链接出基础 apk (清单 + assets)
+    # 1. 编译资源(图标等)并链接出基础 apk (清单 + assets)
     unsigned = os.path.join(BUILD, "unsigned.apk")
-    run([aapt2, "link", "-o", unsigned, "-I", android_jar,
-         "--manifest", os.path.join(SRC, "AndroidManifest.xml"),
-         "-A", os.path.join(SRC, "assets")], "aapt2 链接资源")
+    res_dir = os.path.join(SRC, "res")
+    res_zip = None
+    if os.path.isdir(res_dir):
+        res_zip = os.path.join(BUILD, "res.zip")
+        run([aapt2, "compile", "--dir", res_dir, "-o", res_zip], "aapt2 编译资源")
+    link_args = [aapt2, "link", "-o", unsigned, "-I", android_jar,
+                 "--manifest", os.path.join(SRC, "AndroidManifest.xml"),
+                 "-A", os.path.join(SRC, "assets")]
+    if res_zip:
+        link_args.append(res_zip)          # 资源包(图标)作为链接输入
+    run(link_args, "aapt2 链接资源")
 
     # 2. 编译 Java 代码 (源码目录下所有 .java)
     obj = os.path.join(BUILD, "obj")
